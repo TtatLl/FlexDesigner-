@@ -1,0 +1,41 @@
+{
+  "name": "flexbar-qqmusicnow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "QQ Music lyrics + now playing plugin for Flexbar",
+  "author": "Flexbar QQMusicNow",
+  "license": "MIT",
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "npm-run-all plugin:unlink plugin:link -p plugin:watch plugin:debug",
+    "plugin:watch": "rollup -c -w --watch.onEnd=\"npm run plugin:restart\"",
+    "plugin:unlink": "flexcli plugin unlink --uuid com.flexbar.qqmusicnow --silent",
+    "plugin:link": "flexcli plugin link --path com.flexbar.qqmusicnow.plugin --uuid com.flexbar.qqmusicnow --start false",
+    "plugin:restart": "flexcli plugin restart --uuid=com.flexbar.qqmusicnow",
+    "plugin:debug": "flexcli plugin debug --uuid=com.flexbar.qqmusicnow",
+    "plugin:validate": "flexcli plugin validate --path com.flexbar.qqmusicnow.plugin",
+    "plugin:pack": "node tools/prepare-pack.js && flexcli plugin pack --path com.flexbar.qqmusicnow.plugin",
+    "plugin:pack:all": "node tools/prepare-pack.js --all && flexcli plugin pack --path com.flexbar.qqmusicnow.plugin",
+    "plugin:install": "flexcli plugin install --path ./com.flexbar.qqmusicnow.flexplugin --force",
+    "doctor": "node tools/doctor.js",
+    "preview": "node tools/preview.js"
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.0",
+    "@rollup/plugin-json": "^6.1.0",
+    "@rollup/plugin-node-resolve": "^15.2.2",
+    "@rollup/plugin-terser": "^0.4.4",
+    "glob": "^11.0.1",
+    "npm-run-all": "^4.1.5",
+    "rollup": "^4.0.2"
+  },
+  "dependencies": {
+    "@eniac/flexdesigner": "^1.0.9",
+    "@napi-rs/canvas": "^0.1.83",
+    "qrc-decoder": "^1.0.2"
+  }
+}

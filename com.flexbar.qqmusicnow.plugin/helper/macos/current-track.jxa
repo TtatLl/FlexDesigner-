@@ -1,0 +1,91 @@
+// Reads the track QQ Music is showing right now straight from its window.
+//
+// macOS only: this exists because QQ Music updates its own UI immediately when
+// the song changes, but its media session (what nowplaying-cli reads) lags
+// behind by roughly a second. Knowing the new title early lets the plugin look
+// the lyrics up during that gap, so they are ready the moment the player
+// catches up.
+//
+// Run with: osascript -l JavaScript current-track.jxa
+// Prints one JSON line: {"ok":true,"title":"...","artist":"..."}
+
+ObjC.import('Foundation');
+
+function run() {
+    var out = { ok: false, title: '', artist: '', error: '' };
+    var se;
+    try {
+        se = Application('System Events');
+    } catch (err) {
+        out.error = 'System Events unavailable';
+        return JSON.stringify(out);
+    }
+
+    var target = null;
+    try {
+        // Addressing the process by name avoids enumerating every process on the
+        // machine, which is what made this script slow (~575ms).
+        var direct = se.applicationProcesses.byName('QQMusic');
+        if (direct.exists()) target = direct;
+    } catch (err) {
+        /* fall back to enumeration below */
+    }
+    if (!target) {
+      try {
+        var procs = se.applicationProcesses();
+        for (var i = 0; i < procs.length; i++) {
+            var name = '';
+            try {
+                name = String(procs[i].name());
+            } catch (err) {
+                continue;
+            }
+            if (/qq/i.test(name)) {
+                target = procs[i];
+                break;
+            }
+        }
+      } catch (err) {
+        out.error = 'process list failed';
+        return JSON.stringify(out);
+      }
+    }
+    if (!target) {
+        out.error = 'no QQ process';
+        return JSON.stringify(out);
+    }
+
+    try {
+        var windows = target.windows();
+        for (var w = 0; w < windows.length && w < 3; w++) {
+            var texts;
+            try {
+                texts = windows[w].staticTexts();
+            } catch (err) {
+                continue;
+            }
+            var values = [];
+            for (var t = 0; t < texts.length && t < 4; t++) {
+                var value = '';
+                try {
+                    value = String(texts[t].value());
+                } catch (err) {
+                    value = '';
+                }
+                if (value) values.push(value);
+            }
+            // A player window has a title and an artist; secondary windows
+            // (settings, lyrics-only) do not.
+            if (values.length >= 2 && !/^设置$/.test(values[0])) {
+                out.title = values[0];
+                out.artist = values[1];
+                out.ok = true;
+                return JSON.stringify(out);
+            }
+        }
+        out.error = 'no player window text';
+    } catch (err) {
+        out.error = 'window read failed: ' + String(err);
+    }
+    return JSON.stringify(out);
+}

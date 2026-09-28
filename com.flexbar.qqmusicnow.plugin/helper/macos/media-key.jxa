@@ -1,0 +1,38 @@
+// Sends media commands on macOS through the private MediaRemote framework
+// (the same path `nowplaying-cli` uses). Run with:
+//   osascript -l JavaScript media-key.jxa playpause
+
+ObjC.import('Foundation');
+
+function run(argv) {
+    var action = (argv[0] || 'playpause').toLowerCase();
+    var commands = {
+        play: 0,
+        pause: 1,
+        playpause: 2,
+        toggle: 2,
+        stop: 3,
+        next: 4,
+        previous: 5,
+        prev: 5
+    };
+
+    var code = commands[action];
+    if (code === undefined) {
+        return JSON.stringify({ ok: false, error: 'unknown action: ' + action });
+    }
+
+    try {
+        var bundle = $.NSBundle.bundleWithPath(
+            '/System/Library/PrivateFrameworks/MediaRemote.framework'
+        );
+        if (!bundle.load) {
+            return JSON.stringify({ ok: false, error: 'MediaRemote.framework could not be loaded' });
+        }
+        ObjC.bindFunction('MRMediaRemoteSendCommand', ['bool', ['int', 'id']]);
+        var sent = $.MRMediaRemoteSendCommand(code, $());
+        return JSON.stringify({ ok: !!sent, action: action });
+    } catch (err) {
+        return JSON.stringify({ ok: false, error: String(err) });
+    }
+}

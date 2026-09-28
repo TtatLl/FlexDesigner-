@@ -1,0 +1,10 @@
+node_modules
+logs
+.vscode
+.env
+package-lock.json
+com.flexbar.qqmusicnow.plugin/backend
+com.flexbar.qqmusicnow.plugin/logs
+com.flexbar.qqmusicnow.plugin/node_modules
+com.flexbar.qqmusicnow.plugin/runtime.json
+*.flexplugin

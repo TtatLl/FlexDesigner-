@@ -1,0 +1,458 @@
+{
+  "name": "QQMusicNow",
+  "uuid": "com.flexbar.qqmusicnow",
+  "version": "1.0.0",
+  "author": "Your Name",
+  "entry": "backend/plugin.cjs",
+  "description": "QQ Music lyrics, now playing and playback control for Flexbar",
+  "repo": "https://github.com/your-name/Flexbar-QQMusicNow",
+  "sdk": {
+    "version": "1.0.0"
+  },
+  "software": {
+    "minimumVersion": "1.0.0"
+  },
+  "os": [
+    {
+      "platform": "mac",
+      "minimumVersion": "10.15"
+    },
+    {
+      "platform": "windows",
+      "minimumVersion": "10"
+    }
+  ],
+  "device": [
+    {
+      "name": "flexbar",
+      "version": "1.0.0"
+    }
+  ],
+  "configPage": "configPage",
+  "keyLibrary": {
+    "title": "$PluginName",
+    "style": {
+      "icon": "mdi mdi-music-note-eighth"
+    },
+    "children": [
+      {
+        "title": "$NowPlaying.Title",
+        "tip": "$NowPlaying.Tip",
+        "cid": "com.flexbar.qqmusicnow.nowplaying",
+        "config": {
+          "keyType": "default",
+          "clickable": false,
+          "platform": [
+            "windows",
+            "mac"
+          ]
+        },
+        "style": {
+          "icon": "mdi mdi-music",
+          "width": 600,
+          "bgColor": "#000000",
+          "borderStyle": "none",
+          "borderWidth": 0,
+          "borderColor": "#000000",
+          "flags": [
+            "disable-bg",
+            "disable-fg",
+            "disable-icon-sel",
+            "disable-layout-sel"
+          ]
+        },
+        "data": {
+          "showCover": true,
+          "showTitle": true,
+          "showArtist": true,
+          "showAlbum": true,
+          "showProgress": true,
+          "showTime": true,
+          "useDynamicBackground": true,
+          "backgroundColor": "#000000",
+          "primaryTextColor": "#FFFFFF",
+          "secondaryTextColor": "#D6D6D6",
+          "progressFillColor": "#31C27C",
+          "progressBgColor": "#404040"
+        }
+      },
+      {
+        "title": "$Lyric.Title",
+        "tip": "$Lyric.Tip",
+        "cid": "com.flexbar.qqmusicnow.lyric",
+        "config": {
+          "keyType": "default",
+          "clickable": true,
+          "platform": [
+            "windows",
+            "mac"
+          ]
+        },
+        "style": {
+          "icon": "mdi mdi-music-note",
+          "width": 480,
+          "bgColor": "#000000",
+          "borderStyle": "none",
+          "borderWidth": 0,
+          "borderColor": "#000000",
+          "flags": [
+            "disable-bg",
+            "disable-fg",
+            "disable-icon-sel",
+            "disable-layout-sel"
+          ]
+        },
+        "data": {
+          "showDualLine": true,
+          "showTranslation": true,
+          "highlightWord": true,
+          "useDynamicBackground": false,
+          "backgroundColor": "#1A1A1A",
+          "primaryAlign": "center",
+          "primaryFontSize": 22,
+          "singleLineFontSize": 28,
+          "primaryColor": "#FFFFFF",
+          "highlightColor": "#31C27C",
+          "primaryPaddingTop": 5,
+          "secondaryAlign": "center",
+          "secondaryFontSize": 17,
+          "secondaryColor": "#D6D6D6",
+          "secondaryPaddingTop": 35,
+          "paddingHorizontal": 10
+        }
+      },
+      {
+        "title": "$PlayPause.Title",
+        "tip": "$PlayPause.Tip",
+        "cid": "com.flexbar.qqmusicnow.playpause",
+        "config": {
+          "keyType": "multiState",
+          "platform": [
+            "windows",
+            "mac"
+          ]
+        },
+        "style": {
+          "icon": "mdi mdi-play",
+          "width": 240,
+          "bgColor": "#000000",
+          "fgColor": "#FFFFFF",
+          "borderStyle": "none",
+          "borderWidth": 0,
+          "borderColor": "#000000",
+          "multiStyle": [
+            {
+              "icon": "mdi mdi-play"
+            },
+            {
+              "icon": "mdi mdi-pause"
+            }
+          ]
+        },
+        "data": {
+          "states": [
+            {
+              "icon": "mdi mdi-play"
+            },
+            {
+              "icon": "mdi mdi-pause"
+            }
+          ]
+        }
+      },
+      {
+        "title": "$Previous.Title",
+        "tip": "$Previous.Tip",
+        "cid": "com.flexbar.qqmusicnow.previous",
+        "config": {
+          "keyType": "default",
+          "clickable": true,
+          "platform": [
+            "windows",
+            "mac"
+          ]
+        },
+        "style": {
+          "icon": "mdi mdi-skip-previous",
+          "width": 240,
+          "bgColor": "#000000",
+          "borderStyle": "none",
+          "borderWidth": 0,
+          "borderColor": "#000000"
+        },
+        "data": {}
+      },
+      {
+        "title": "$Next.Title",
+        "tip": "$Next.Tip",
+        "cid": "com.flexbar.qqmusicnow.next",
+        "config": {
+          "keyType": "default",
+          "clickable": true,
+          "platform": [
+            "windows",
+            "mac"
+          ]
+        },
+        "style": {
+          "icon": "mdi mdi-skip-next",
+          "width": 240,
+          "bgColor": "#000000",
+          "borderStyle": "none",
+          "borderWidth": 0,
+          "borderColor": "#000000"
+        },
+        "data": {}
+      },
+      {
+        "title": "$Source.Title",
+        "tip": "$Source.Tip",
+        "cid": "com.flexbar.qqmusicnow.source",
+        "config": {
+          "keyType": "default",
+          "clickable": true,
+          "platform": [
+            "windows",
+            "mac"
+          ]
+        },
+        "style": {
+          "icon": "mdi mdi-information-outline",
+          "width": 240,
+          "bgColor": "#000000",
+          "borderStyle": "none",
+          "borderWidth": 0,
+          "borderColor": "#000000"
+        },
+        "data": {
+          "showProviderName": true,
+          "showLyricSource": true
+        }
+      }
+    ]
+  },
+  "local": {
+    "en": {
+      "PluginName": "QQMusicNow",
+      "NowPlaying": {
+        "Title": "Now Playing",
+        "Tip": "QQ Music cover, title, artist and progress bar",
+        "UI": {
+          "ShowCover": "Show Album Cover",
+          "ShowTitle": "Show Song Title",
+          "ShowArtist": "Show Artist",
+          "ShowAlbum": "Show Album",
+          "ShowProgress": "Show Progress Bar",
+          "ShowTime": "Show Elapsed / Total Time",
+          "UseDynamicBackground": "Use Album Art Color Background",
+          "BackgroundColor": "Background Color",
+          "PrimaryTextColor": "Primary Text Color",
+          "SecondaryTextColor": "Secondary Text Color",
+          "Progress": {
+            "Title": "Progress",
+            "FillColor": "Fill Color",
+            "BgColor": "Track Color"
+          }
+        }
+      },
+      "Lyric": {
+        "Title": "Lyrics",
+        "Tip": "Synced QQ Music lyrics with word highlight; tap to toggle one / two lines",
+        "UI": {
+          "ShowDualLine": "Show Current + Next Line",
+          "ShowTranslation": "Show Translation",
+          "HighlightWord": "Word-by-word Highlight",
+          "UseDynamicBackground": "Use Album Art Color Background",
+          "BackgroundColor": "Background Color",
+          "Align": "Alignment",
+          "AlignLeft": "Left",
+          "AlignCenter": "Center",
+          "AlignRight": "Right",
+          "FontSize": "Font Size",
+          "Primary": {
+            "Title": "Current Line",
+            "Color": "Text Color",
+            "HighlightColor": "Highlight Color",
+            "PaddingTop": "Top Offset",
+            "SingleLineFontSize": "Single-line Font Size"
+          },
+          "Secondary": {
+            "Title": "Next Line / Translation",
+            "Color": "Text Color",
+            "PaddingTop": "Top Offset"
+          },
+          "Padding": {
+            "Title": "Layout",
+            "Horizontal": "Horizontal Padding"
+          }
+        }
+      },
+      "PlayPause": {
+        "Title": "Play / Pause",
+        "Tip": "Toggle QQ Music playback",
+        "Note": "QQ Music receives playback control through the system media keys, so no window focus is needed. If it does not respond in your environment, set customCommands in the plugin settings."
+      },
+      "Previous": {
+        "Title": "Previous Track",
+        "Tip": "Skip to previous track"
+      },
+      "Next": {
+        "Title": "Next Track",
+        "Tip": "Skip to next track"
+      },
+      "Source": {
+        "Title": "Status",
+        "Tip": "Shows the active detection and lyric source; tap to reload lyrics",
+        "UI": {
+          "ShowProviderName": "Show Detection Source",
+          "ShowLyricSource": "Show Lyric Source"
+        }
+      },
+      "Config": {
+        "Title": "QQMusicNow Settings",
+        "General": {
+          "Title": "General",
+          "Provider": "Now Playing Detection",
+          "ProviderAuto": "Automatic (recommended)",
+          "ProviderSmtc": "Windows Media Session (SMTC)",
+          "ProviderMacos": "macOS Media Remote",
+          "ProviderWindow": "Window Title",
+          "ProviderManual": "Manual Song",
+          "Offset": "Lyric Offset (ms)",
+          "OffsetHint": "Positive value makes lyrics appear later",
+          "FontFamily": "Font Family Override",
+          "FontFamilyHint": "Leave empty to auto-detect a CJK font",
+          "PollInterval": "Refresh Interval (ms)",
+          "ManualSong": "Manual Song",
+          "ManualSongHint": "Format: Song Title - Artist. Used only in Manual mode."
+        },
+        "Actions": {
+          "Title": "Diagnostics",
+          "Probe": "Test Detection",
+          "ProbeRunning": "Testing...",
+          "Reload": "Reload Lyrics",
+          "OpenQqMusic": "Open QQ Music",
+          "Result": "Result",
+          "NoResult": "No QQ Music session detected",
+          "Save": "Save",
+          "Saved": "Saved",
+          "CanvasAvailable": "Canvas renderer",
+          "CanvasMissing": "Canvas renderer missing - text fallback mode",
+          "Yes": "available",
+          "No": "not available"
+        }
+      }
+    },
+    "zh": {
+      "PluginName": "QQMusicNow",
+      "NowPlaying": {
+        "Title": "正在播放",
+        "Tip": "显示 QQ 音乐封面、歌名、歌手与进度条",
+        "UI": {
+          "ShowCover": "显示专辑封面",
+          "ShowTitle": "显示歌曲名",
+          "ShowArtist": "显示歌手",
+          "ShowAlbum": "显示专辑",
+          "ShowProgress": "显示进度条",
+          "ShowTime": "显示时间",
+          "UseDynamicBackground": "使用封面主色背景",
+          "BackgroundColor": "背景颜色",
+          "PrimaryTextColor": "主文字颜色",
+          "SecondaryTextColor": "副文字颜色",
+          "Progress": {
+            "Title": "进度条",
+            "FillColor": "进度颜色",
+            "BgColor": "轨道颜色"
+          }
+        }
+      },
+      "Lyric": {
+        "Title": "歌词",
+        "Tip": "QQ 音乐逐字歌词，点击可切换单行/双行",
+        "UI": {
+          "ShowDualLine": "显示当前行 + 下一行",
+          "ShowTranslation": "显示翻译",
+          "HighlightWord": "逐字高亮",
+          "UseDynamicBackground": "使用封面主色背景",
+          "BackgroundColor": "背景颜色",
+          "Align": "对齐方式",
+          "AlignLeft": "左对齐",
+          "AlignCenter": "居中",
+          "AlignRight": "右对齐",
+          "FontSize": "字号",
+          "Primary": {
+            "Title": "当前行",
+            "Color": "文字颜色",
+            "HighlightColor": "高亮颜色",
+            "PaddingTop": "顶部偏移",
+            "SingleLineFontSize": "单行模式字号"
+          },
+          "Secondary": {
+            "Title": "下一行 / 翻译",
+            "Color": "文字颜色",
+            "PaddingTop": "顶部偏移"
+          },
+          "Padding": {
+            "Title": "布局",
+            "Horizontal": "左右内边距"
+          }
+        }
+      },
+      "PlayPause": {
+        "Title": "播放 / 暂停",
+        "Tip": "控制 QQ 音乐播放与暂停",
+        "Note": "QQ 音乐通过系统媒体键接收播放控制，无需窗口焦点；如个别环境下无效，可在插件设置页配置自定义命令。"
+      },
+      "Previous": {
+        "Title": "上一首",
+        "Tip": "切换到上一首"
+      },
+      "Next": {
+        "Title": "下一首",
+        "Tip": "切换到下一首"
+      },
+      "Source": {
+        "Title": "状态",
+        "Tip": "显示当前的检测方式与歌词来源，点击可重新加载歌词",
+        "UI": {
+          "ShowProviderName": "显示检测方式",
+          "ShowLyricSource": "显示歌词来源"
+        }
+      },
+      "Config": {
+        "Title": "QQMusicNow 设置",
+        "General": {
+          "Title": "通用设置",
+          "Provider": "播放检测方式",
+          "ProviderAuto": "自动（推荐）",
+          "ProviderSmtc": "Windows 媒体会话（SMTC）",
+          "ProviderMacos": "macOS 媒体中心（MediaRemote）",
+          "ProviderWindow": "窗口标题",
+          "ProviderManual": "手动指定歌曲",
+          "Offset": "歌词偏移（毫秒）",
+          "OffsetHint": "数值越大，歌词出现得越晚",
+          "FontFamily": "字体覆盖",
+          "FontFamilyHint": "留空则自动选择中文字体",
+          "PollInterval": "刷新间隔（毫秒）",
+          "ManualSong": "手动歌曲",
+          "ManualSongHint": "格式：歌名 - 歌手。仅手动模式使用。"
+        },
+        "Actions": {
+          "Title": "诊断",
+          "Probe": "测试检测",
+          "ProbeRunning": "测试中…",
+          "Reload": "重新加载歌词",
+          "OpenQqMusic": "打开 QQ 音乐",
+          "Result": "结果",
+          "NoResult": "未检测到 QQ 音乐播放会话",
+          "Save": "保存",
+          "Saved": "已保存",
+          "CanvasAvailable": "画布渲染",
+          "CanvasMissing": "缺少画布渲染模块，已切换为文字模式",
+          "Yes": "可用",
+          "No": "不可用"
+        }
+      }
+    }
+  }
+}

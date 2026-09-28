@@ -1,0 +1,105 @@
+// Best-effort macOS now-playing probe through the private MediaRemote framework.
+//
+// macOS has no public now-playing API. The recommended setup for this plugin is
+// `brew install nowplaying-cli`, which this plugin prefers automatically; this
+// script is the fallback that needs no extra install. It prints a single JSON
+// line so the Node side can parse it:
+//   {"type":"sample","ts":...,"session":{...}}
+//   {"type":"error","message":"..."}
+//
+// Run with: osascript -l JavaScript nowplaying.jxa
+
+ObjC.import('Foundation');
+ObjC.import('AppKit');
+
+function emit(payload) {
+    return JSON.stringify(payload);
+}
+
+function loadMediaRemote() {
+    var bundle = $.NSBundle.bundleWithPath(
+        '/System/Library/PrivateFrameworks/MediaRemote.framework'
+    );
+    if (!bundle || !bundle.load) return false;
+    try {
+        ObjC.bindFunction('MRMediaRemoteGetNowPlayingInfo', ['void', ['id', 'id']]);
+        ObjC.bindFunction('MRMediaRemoteGetNowPlayingApplicationIsPlaying', ['void', ['id', 'id']]);
+    } catch (err) {
+        return false;
+    }
+    return true;
+}
+
+// JXA has no libdispatch bridge, so `dispatch_get_main_queue()` is undefined
+// ("is not a function"). The main queue can still be borrowed from the main
+// NSOperationQueue, which MediaRemote happily accepts.
+function mainQueue() {
+    try {
+        var queue = $.NSOperationQueue.mainQueue.underlyingQueue;
+        if (queue) return queue;
+    } catch (err) {
+        /* fall through */
+    }
+    try {
+        ObjC.bindFunction('dispatch_get_main_queue', ['id', []]);
+        var bound = $.dispatch_get_main_queue();
+        if (bound) return bound;
+    } catch (err) {
+        /* fall through */
+    }
+    return null;
+}
+
+function run() {
+    if (!loadMediaRemote()) {
+        return emit({ type: 'error', message: 'MediaRemote.framework could not be loaded' });
+    }
+
+    var queue = mainQueue();
+    if (!queue) {
+        return emit({ type: 'error', message: 'no dispatch queue available for MediaRemote' });
+    }
+
+    var captured = null;
+    try {
+        $.MRMediaRemoteGetNowPlayingInfo(queue, function (info) {
+            if (info) captured = info;
+        });
+        // Give the async callback a moment to land on the main run loop.
+        $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.35));
+    } catch (err) {
+        return emit({ type: 'error', message: 'MediaRemote call failed: ' + String(err) });
+    }
+
+    if (!captured) {
+        return emit({ type: 'error', message: 'MediaRemote returned no now-playing info' });
+    }
+
+    var title = ObjC.unwrap(captured.objectForKey('kMRMediaRemoteNowPlayingInfoTitle'));
+    var artist = ObjC.unwrap(captured.objectForKey('kMRMediaRemoteNowPlayingInfoArtist'));
+    var album = ObjC.unwrap(captured.objectForKey('kMRMediaRemoteNowPlayingInfoAlbum'));
+    var duration = ObjC.unwrap(captured.objectForKey('kMRMediaRemoteNowPlayingInfoDuration'));
+    var elapsed = ObjC.unwrap(captured.objectForKey('kMRMediaRemoteNowPlayingInfoElapsedTime'));
+    var rate = ObjC.unwrap(captured.objectForKey('kMRMediaRemoteNowPlayingInfoPlaybackRate'));
+    var bundleId = ObjC.unwrap(captured.objectForKey('kMRMediaRemoteNowPlayingInfoClientBundleIdentifier'));
+
+    if (!title) {
+        return emit({ type: 'error', message: 'no title in MediaRemote payload' });
+    }
+
+    return emit({
+        type: 'sample',
+        ts: Date.now(),
+        session: {
+            // Report the real bundle id only: a placeholder here made the
+            // plugin's QQ-Music filter reject genuine macOS sessions.
+            appId: bundleId || '',
+            title: title,
+            artist: artist || '',
+            album: album || '',
+            status: Number(rate) > 0 ? 'Playing' : 'Paused',
+            positionSec: Number(elapsed) || 0,
+            durationSec: Number(duration) || 0
+        }
+    });
+}

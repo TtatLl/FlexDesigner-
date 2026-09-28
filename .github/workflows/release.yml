@@ -1,0 +1,41 @@
+name: Pack and release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install FlexCLI
+        run: npm install -g @eniac/flexcli
+
+      - name: Build plugin
+        run: npm run build
+
+      # FlexGate reads the plugin metadata from this repository; the packed
+      # .flexplugin is published as a release asset so users can download it.
+      - name: Pack plugin
+        run: npm run plugin:pack
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: com.flexbar.qqmusicnow.flexplugin

@@ -1,0 +1,105 @@
+// Diagnostic: can we read QQ Music's user interface through System Events?
+//
+// Reading another app's UI needs the Accessibility permission; clicking its
+// buttons needs it too. This probe reports what is reachable so the plugin can
+// decide whether UI control is a viable fallback for players that ignore the
+// system media commands (QQ Music ignores TogglePlayPause).
+//
+// Run with: osascript -l JavaScript ui-probe.jxa
+
+ObjC.import('Foundation');
+
+function run() {
+    var out = { ok: false, error: '', processes: [], windows: [], texts: [], buttons: [], elements: [] };
+    var se;
+    try {
+        se = Application('System Events');
+    } catch (err) {
+        out.error = 'System Events unavailable: ' + String(err);
+        return JSON.stringify(out);
+    }
+
+    var target = null;
+    try {
+        var procs = se.applicationProcesses();
+        for (var i = 0; i < procs.length; i++) {
+            var name = '';
+            try {
+                name = String(procs[i].name());
+            } catch (err) {
+                continue;
+            }
+            if (/qq/i.test(name)) {
+                out.processes.push(name);
+                if (!target) target = procs[i];
+            }
+        }
+    } catch (err) {
+        out.error = 'cannot enumerate processes: ' + String(err);
+        return JSON.stringify(out);
+    }
+
+    if (!target) {
+        out.error = 'no QQ process found';
+        return JSON.stringify(out);
+    }
+
+    try {
+            var windows = target.windows();
+        for (var w = 0; w < windows.length; w++) {
+            out.windows.push(String(windows[w].name()));
+            if (w > 2) break; // a few windows are enough for a probe
+            var texts = windows[w].staticTexts();
+            for (var t = 0; t < texts.length && t < 30; t++) {
+                var value = '';
+                try {
+                    value = String(texts[t].value());
+                } catch (err) {
+                    try {
+                        value = String(texts[t].name());
+                    } catch (err2) {
+                        value = '';
+                    }
+                }
+                if (value) out.texts.push('w' + w + ':' + value);
+            }
+            var buttons = windows[w].buttons();
+            for (var b = 0; b < buttons.length && b < 30; b++) {
+                var label = '';
+                try {
+                    label = String(buttons[b].description() || buttons[b].name());
+                } catch (err) {
+                    label = '';
+                }
+                if (label) out.buttons.push('w' + w + ':' + label);
+            }
+            // The transport row lives in a toolbar-like group on some builds;
+            // walk the whole subtree once so nothing is missed.
+            try {
+                var elements = windows[w].entireContents();
+                for (var e = 0; e < elements.length && out.elements.length < 60; e++) {
+                    var el = elements[e];
+                    var role = '';
+                    var text = '';
+                    try {
+                        role = String(el.role());
+                    } catch (err) {
+                        role = '';
+                    }
+                    try {
+                        text = String(el.value() || el.description() || el.name() || '');
+                    } catch (err) {
+                        text = '';
+                    }
+                    if (text) out.elements.push(role + '=' + text);
+                }
+            } catch (err) {
+                out.elements.push('entireContents failed: ' + String(err));
+            }
+        }
+        out.ok = true;
+    } catch (err) {
+        out.error = 'cannot read UI: ' + String(err);
+    }
+    return JSON.stringify(out);
+}
