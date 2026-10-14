@@ -24,18 +24,33 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # Each .flexplugin must carry the native canvas build of *its own*
+      # platform. A plain install on this runner only fetches the Linux binding,
+      # which is how the first tagged build produced packages that silently lost
+      # canvas rendering everywhere else - so pull the other platforms too.
+      - name: Install platform canvas binaries
+        run: |
+          npm install --no-save \
+            @napi-rs/canvas-darwin-arm64@^0.1.83 \
+            @napi-rs/canvas-darwin-x64@^0.1.83 \
+            @napi-rs/canvas-win32-x64-msvc@^0.1.83
+
       - name: Install FlexCLI
         run: npm install -g @eniac/flexcli
 
       - name: Build plugin
         run: npm run build
 
-      # FlexGate reads the plugin metadata from this repository; the packed
-      # .flexplugin is published as a release asset so users can download it.
-      - name: Pack plugin
-        run: npm run plugin:pack
+      - name: Pack the four platform packages
+        run: node tools/make-platform-packages.js
 
-      - name: Upload release asset
+      - name: Verify each package carries the right native library
+        run: node tools/verify-platform-packages.js
+
+      # FlexGate reads the plugin metadata from this repository; the packed
+      # .flexplugin files are published as release assets so users can download
+      # the one that matches their machine.
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: com.flexbar.qqmusicnow.flexplugin
+          files: dist/*.flexplugin

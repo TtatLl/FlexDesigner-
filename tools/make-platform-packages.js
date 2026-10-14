@@ -21,7 +21,9 @@ const PLUGIN_NAME = 'com.flexbar.qqmusicnow.plugin';
 const PLUGIN_DIR = path.join(ROOT, PLUGIN_NAME);
 const SOURCE_MODULES = path.join(ROOT, 'node_modules', '@napi-rs');
 const DIST = path.join(ROOT, 'dist');
-const STAGE_ROOT = path.join(ROOT, '..', '..', 'work', 'pkg-stage');
+// Keep the staging area inside the repo: it used to live two levels up, which
+// happens to work locally but writes outside the checkout in CI.
+const STAGE_ROOT = path.join(ROOT, '.pkg-stage');
 
 const TARGETS = [
   { label: 'macos.arm64', packages: ['canvas', 'canvas-darwin-arm64'], note: 'macOS Apple Silicon' },

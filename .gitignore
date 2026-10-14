@@ -8,3 +8,5 @@ com.flexbar.qqmusicnow.plugin/logs
 com.flexbar.qqmusicnow.plugin/node_modules
 com.flexbar.qqmusicnow.plugin/runtime.json
 *.flexplugin
+dist
+.pkg-stage
