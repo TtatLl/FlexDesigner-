@@ -1,11 +1,20 @@
 // Sends media commands on macOS through the private MediaRemote framework
 // (the same path `nowplaying-cli` uses). Run with:
 //   osascript -l JavaScript media-key.jxa playpause
+//   osascript -l JavaScript media-key.jxa pause com.tencent.QQMusicMac
+//
+// The optional second argument switches to MRMediaRemoteSendCommandToApp, which
+// is the only known way to address an app that does not own the system media
+// session (e.g. QQ Music while a browser video holds it). The argument shape was
+// found empirically on macOS 15.7 (a string in slot 4 is accepted; a string in
+// slot 2 or 3 throws), but whether the command really reaches that app is NOT
+// verified yet - tools/probe-targeted-transport.js is what proves it.
 
 ObjC.import('Foundation');
 
 function run(argv) {
     var action = (argv[0] || 'playpause').toLowerCase();
+    var targetApp = String(argv[1] || '').trim();
     var commands = {
         play: 0,
         pause: 1,
@@ -28,6 +37,17 @@ function run(argv) {
         );
         if (!bundle.load) {
             return JSON.stringify({ ok: false, error: 'MediaRemote.framework could not be loaded' });
+        }
+        if (targetApp) {
+            ObjC.bindFunction('MRMediaRemoteSendCommandToApp', ['bool', ['int', 'id', 'id', 'id', 'id']]);
+            var app = $.NSString.stringWithString(targetApp);
+            var sentToApp = $.MRMediaRemoteSendCommandToApp(code, $(), $(), app, $());
+            return JSON.stringify({
+                ok: !!sentToApp,
+                action: action,
+                targetApp: targetApp,
+                via: 'MRMediaRemoteSendCommandToApp',
+            });
         }
         ObjC.bindFunction('MRMediaRemoteSendCommand', ['bool', ['int', 'id']]);
         var sent = $.MRMediaRemoteSendCommand(code, $());

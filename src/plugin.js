@@ -7,7 +7,7 @@ const { spawn } = require('child_process');
 
 const { plugin, logger, pluginPath } = require('@eniac/flexdesigner');
 
-const { CID, PROVIDERS } = require('./constants');
+const { CID, PROVIDERS, MACOS_QQ_BUNDLE_ID } = require('./constants');
 const { ConfigManager } = require('./config');
 const { RuntimeState } = require('./state');
 const { NowPlayingService } = require('./nowplaying');
@@ -130,6 +130,12 @@ let lastPlayPauseState = null;
 const PLAYBACK_SETTLE_MS = 3000;
 const PLAYBACK_GIVE_UP_MS = 700;
 const PLAYBACK_GIVE_UP_SAMPLES = 2;
+// Skipping tracks: the player announces the new song a few hundred ms after the
+// key lands, so sample fast for a moment and chase the change instead of
+// waiting for the next 1s poll.
+const SKIP_HURRY = { windowMs: 5000, intervalMs: 200 };
+const SKIP_CHASE_MS = 2500;
+const SKIP_CHASE_STEP_MS = 120;
 
 function pendingPlaybackIsActive() {
   if (!pendingPlayback) return false;
@@ -153,6 +159,14 @@ function clearPendingPlayback(reason) {
  * with the button the user just pressed.
  */
 function resolvePlaybackState(snapshot) {
+  if (snapshot && snapshot.background) {
+    // Another app owns the system media session, so QQ Music's own state is
+    // invisible: keep the state the user last saw or asked for instead of
+    // letting "unknown" turn into "paused".
+    if (desiredPlaying !== null) return desiredPlaying;
+    return lastPlayPauseState === null ? true : lastPlayPauseState === 1;
+  }
+
   if (!pendingPlaybackIsActive()) {
     desiredPlaying = snapshot ? snapshot.isPlaying : desiredPlaying;
     return snapshot ? snapshot.isPlaying : false;
@@ -697,6 +711,10 @@ async function updateNowPlayingKeys(snapshot, positionMs) {
       coverUrl,
       JSON.stringify(options),
       engine.isAvailable() ? 'c' : 't',
+      // The idle message ("媒体会话被 Chrome 占用") is not part of the track
+      // fields, so it has to be in the signature or the key would keep showing
+      // the previous text.
+      snapshot ? '' : statusMessage,
     ].join('|');
     if (signature === lastNowPlayingSignature) continue;
     lastNowPlayingSignature = signature;
@@ -731,6 +749,7 @@ async function updateLyricKeys(force = false) {
 
   // Nothing playable yet: fall back to a text key, but only redraw on change.
   if (state.status !== 'ready' || !state.lines.length) {
+    const foreign = nowPlaying.foreignSession();
     const message =
       state.status === 'loading'
         ? '歌词加载中…'
@@ -738,7 +757,9 @@ async function updateLyricKeys(force = false) {
           ? '歌词获取失败'
           : snapshot
             ? '未找到歌词'
-            : 'QQ 音乐未在播放';
+            : foreign
+              ? `媒体会话被${foreignAppLabel(foreign.appId)}占用`
+              : 'QQ 音乐未在播放';
     if (!force && message === statusMessage) return;
     statusMessage = message;
     logger.debug(`[Lyric] status text: ${message}`);
@@ -857,9 +878,48 @@ const PROVIDER_LABELS = {
 
 const LYRIC_SOURCE_LABELS = { qrc: 'QRC', lrc: 'LRC', none: '--' };
 
+/** Human name for the app that stole the media session, for on-key messages. */
+const FOREIGN_APP_LABELS = {
+  'com.apple.Safari': 'Safari',
+  'com.google.Chrome': 'Chrome',
+  'com.microsoft.edgemac': 'Edge',
+  'com.brave.Browser': 'Brave',
+  'org.mozilla.firefox': 'Firefox',
+  'com.apple.Music': 'Apple 音乐',
+  'com.apple.QuickTimePlayerX': 'QuickTime',
+  'com.apple.TV': 'Apple TV',
+};
+
+function foreignAppLabel(appId) {
+  const id = String(appId || '');
+  if (FOREIGN_APP_LABELS[id]) return FOREIGN_APP_LABELS[id];
+  const tail = id.split('.').filter(Boolean).pop() || '';
+  return tail || '其他应用';
+}
+
+/**
+ * Set when a transport key has to go through QQ Music's own global hotkey.
+ *
+ * The system media key reaches whichever app owns the media session - a browser
+ * video the moment one is playing - and the private "send the command to this
+ * app" API does not reach QQ Music on macOS 15 (measured 2026-10-14). QQ Music
+ * registers real global shortcuts (play/pause, next, previous) itself, so
+ * synthesising that keystroke is what makes the bar "only ever control QQ
+ * Music". `qqHotkeys: false` in the config turns it off.
+ */
+function foreignTransportSession() {
+  if (process.platform !== 'darwin') return null;
+  if (config.get('qqHotkeys') === false) return null;
+  return nowPlaying.foreignSession();
+}
+
 async function updateControlKeys(snapshot) {
+  // While another app owns the media session we cannot see QQ Music at all.
+  // Keep the icon where it is instead of painting a guess.
+  const blind = !snapshot && !!nowPlaying.foreignSession();
   const isPlaying = resolvePlaybackState(snapshot);
   for (const { serialNumber, key } of findKeys(CID.playPause)) {
+    if (blind) continue;
     const state = isPlaying ? 1 : 0;
     if (state !== lastPlayPauseState) {
       logger.info(
@@ -878,7 +938,8 @@ async function updateControlKeys(snapshot) {
   const providerId = status.activeProvider?.id || (config.get('provider') === PROVIDERS.MANUAL ? 'manual' : '--');
   const lyricSource = lyricsService.getState().status === 'ready' ? lyricsService.getState().source : 'none';
   const text = `${PROVIDER_LABELS[providerId] || providerId} · ${LYRIC_SOURCE_LABELS[lyricSource] || lyricSource}`;
-  const signature = `${text}|${status.snapshot ? 'playing' : 'idle'}|${engine.isAvailable()}`;
+  const background = !!nowPlaying.getSnapshot()?.background;
+  const signature = `${text}|${status.snapshot ? 'playing' : 'idle'}|${background ? 'bg' : 'fg'}|${engine.isAvailable()}`;
   if (signature === lastSourceSignature) return;
   lastSourceSignature = signature;
 
@@ -886,6 +947,7 @@ async function updateControlKeys(snapshot) {
     const lines = [];
     if (key.data?.showProviderName !== false) lines.push(PROVIDER_LABELS[providerId] || providerId);
     if (key.data?.showLyricSource !== false) lines.push(LYRIC_SOURCE_LABELS[lyricSource] || lyricSource);
+    if (background) lines.push('后台');
     // Rendered as an image so Chinese labels ("窗口", "手动") do not turn into
     // tofu boxes in the host's Latin-only font.
     const buffer = renderTextKey({
@@ -1051,10 +1113,26 @@ async function probeDetection() {
   };
 }
 
-async function handleKeyAction(serialNumber, key) {
+async function handleKeyAction(serialNumber, key, hostState) {
   if (!key) return;
   const registered = deviceKeys.get(serialNumber);
   const target = (registered && registered.get(key.uid)) || key;
+
+  // Transport keys are the only ones that leave the plugin, and the plain media
+  // key goes to whoever owns the system media session - a browser video
+  // whenever one is playing (measured 2026-10-13 00:02:50: the pause key paused
+  // a web video while QQ Music kept playing). In that case drive QQ Music
+  // through its own global hotkey instead.
+  const foreignTransport = foreignTransportSession();
+  const transportHint = foreignTransport ? { qqHotkey: true } : {};
+  if (foreignTransport) {
+    logger.info(
+      `[Plugin] transport key via QQ Music hotkey: ${target.cid.split('.').pop()} ` +
+        `(media session belongs to ${foreignTransport.appId}` +
+        (foreignTransport.title ? ` "${foreignTransport.title}"` : '') +
+        ` playing=${foreignTransport.isPlaying})`
+    );
+  }
 
   switch (target.cid) {
     case CID.lyric: {
@@ -1079,11 +1157,23 @@ async function handleKeyAction(serialNumber, key) {
     }
     case CID.playPause: {
       const snapshot = nowPlaying.getSnapshot();
-      // Toggle the last *requested* state, not the player's (often stale)
-      // report: otherwise a second press during the settle window can compute
-      // the same target twice and swallow the user's intent.
       const displayed = resolvePlaybackState(snapshot);
-      const base = desiredPlaying === null ? displayed : desiredPlaying;
+      // Toggle what the key is showing right now. The host reports the state the
+      // key had when it was pressed, which is exactly what the user saw; a
+      // separate "desired" variable drifts from the icon (it also follows the
+      // player's stale reports) and made the same command get sent twice -
+      // measured 2026-10-13: 00:02:53 icon->1, 00:02:57 press -> "expecting
+      // paused" while the key already showed play, so nothing played.
+      // While the player is still catching up with the previous press we keep
+      // toggling from the state we just asked for, so a burst of presses still
+      // alternates instead of repeating one command.
+      const base = pendingPlaybackIsActive()
+        ? displayed
+        : typeof hostState === 'number'
+          ? hostState === 1
+          : lastPlayPauseState !== null
+            ? lastPlayPauseState === 1
+            : displayed;
       const expected = !base;
       desiredPlaying = expected;
 
@@ -1102,7 +1192,7 @@ async function handleKeyAction(serialNumber, key) {
       const sendStartedAt = Date.now();
       // macOS: hand the desired state over so QQ Music gets an explicit
       // play/pause (it ignores the system toggle command).
-      const ok = await mediaKeys.send('playpause', { expectPlaying: expected });
+      const ok = await mediaKeys.send('playpause', { expectPlaying: expected, ...transportHint });
       logger.info(
         `[Plugin] play/pause pressed (media key sent: ${ok}, ${Date.now() - sendStartedAt}ms)` +
           ` -> expecting ${expected ? 'playing' : 'paused'}`
@@ -1113,7 +1203,10 @@ async function handleKeyAction(serialNumber, key) {
     case CID.previous: {
       const before = currentTrackSignature;
       const previousTitle = nowPlaying.getSnapshot()?.title || '';
-      const ok = await mediaKeys.send('previous');
+      // Start the fast sampling window before awaiting the key command: the
+      // player can publish the new track while the command is still in flight.
+      void nowPlaying.hurry(SKIP_HURRY);
+      const ok = await mediaKeys.send('previous', transportHint);
       logger.info(`[Plugin] previous key pressed (media key sent: ${ok})`);
       void prefetchUpcomingTrack(previousTitle);
       await awaitTrackChange(before);
@@ -1123,7 +1216,8 @@ async function handleKeyAction(serialNumber, key) {
     case CID.next: {
       const before = currentTrackSignature;
       const previousTitle = nowPlaying.getSnapshot()?.title || '';
-      const ok = await mediaKeys.send('next');
+      void nowPlaying.hurry(SKIP_HURRY);
+      const ok = await mediaKeys.send('next', transportHint);
       logger.info(`[Plugin] next key pressed (media key sent: ${ok})`);
       void prefetchUpcomingTrack(previousTitle);
       await awaitTrackChange(before);
@@ -1162,16 +1256,23 @@ async function prefetchUpcomingTrack(previousTitle, budgetMs = 2500) {
 
 /**
  * After a skip press, watch the player instead of waiting for the next regular
- * poll: the new track is picked up within a few hundred milliseconds.
+ * poll. The provider is in its fast-sampling window by now (see SKIP_HURRY), so
+ * this loop reads a fresh sample every step and the new track is picked up
+ * within a few hundred milliseconds of the player announcing it.
  */
-async function awaitTrackChange(previousSignature, budgetMs = 2000) {
-  const deadline = Date.now() + budgetMs;
+async function awaitTrackChange(previousSignature, budgetMs = SKIP_CHASE_MS) {
+  const startedAt = Date.now();
+  const deadline = startedAt + budgetMs;
   while (Date.now() < deadline) {
-    await sleep(250);
     const snapshot = await nowPlaying.poll();
     const signature = snapshot ? `${snapshot.title}|${snapshot.artist}|${snapshot.source}` : '';
-    if (signature && signature !== previousSignature) return true;
+    if (signature && signature !== previousSignature) {
+      logger.info(`[Plugin] track change seen ${Date.now() - startedAt}ms after skip`);
+      return true;
+    }
+    await sleep(SKIP_CHASE_STEP_MS);
   }
+  logger.warn(`[Plugin] no track change within ${budgetMs}ms after skip`);
   return false;
 }
 
@@ -1239,7 +1340,7 @@ plugin.on('plugin.data', (payload) => {
     );
   }
   setImmediate(() => {
-    void handleKeyAction(payload?.serialNumber, key).catch((err) => {
+    void handleKeyAction(payload?.serialNumber, key, hostState).catch((err) => {
       logger.error(`[Plugin] key action failed: ${err.message}`);
     });
   });
@@ -1379,6 +1480,9 @@ async function main() {
         .map((provider) => `${provider.id}=${provider.state}${provider.detail ? `(${provider.detail})` : ''}`)
         .join(', ')}`
     );
+    // Transport keys fall back to QQ Music's own global hotkey when another app
+    // owns the media session; that only works with the Accessibility permission.
+    mediaKeys.probeQqHotkeyPermission();
   }, 6000);
 }
 

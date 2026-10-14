@@ -1,8 +1,8 @@
 {
   "name": "QQMusicNow",
   "uuid": "com.flexbar.qqmusicnow",
-  "version": "1.0.0",
-  "author": "Your Name",
+  "version": "1.0.7",
+  "author": "TtatLl",
   "entry": "backend/plugin.cjs",
   "description": "QQ Music lyrics, now playing and playback control for Flexbar",
   "repo": "https://github.com/TtatLl/FlexDesigner-",

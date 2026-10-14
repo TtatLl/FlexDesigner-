@@ -2,6 +2,14 @@
 
 const UUID = 'com.flexbar.qqmusicnow';
 
+/**
+ * Bundle id QQ Music reports to the macOS media session. Used to address
+ * transport commands straight at QQ Music (`MRMediaRemoteSendCommandToApp`),
+ * because the plain media key goes to whichever app owns the session - which is
+ * a browser video whenever the user is watching one.
+ */
+const MACOS_QQ_BUNDLE_ID = 'com.tencent.QQMusicMac';
+
 const CID = {
   nowPlaying: `${UUID}.nowplaying`,
   lyric: `${UUID}.lyric`,
@@ -30,4 +38,4 @@ const DEFAULT_CONFIG = {
   debug: false,
 };
 
-module.exports = { UUID, CID, PROVIDERS, DEFAULT_CONFIG };
+module.exports = { UUID, CID, PROVIDERS, DEFAULT_CONFIG, MACOS_QQ_BUNDLE_ID };

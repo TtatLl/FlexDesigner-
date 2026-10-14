@@ -430,3 +430,56 @@ QQ 音乐里这首歌有两个版本：单曲《失重前幸福》（album mid `
 
 顺带说明：设备上"某一页没有 QQ 音乐按键"时，宿主会推 `loaded 0 key(s)`，插件停画是**正确**行为，
 不是掉线（那种情况看日志会一直是 `loaded 0 key(s)`，切回那一页立刻恢复）。
+
+---
+
+## 12. 2026-10-14 更新：macOS 播放控制 + 后台模式（版本 1.0.7）
+
+### 要解决的问题
+
+macOS 上浏览器一放网页视频，系统媒体会话就归浏览器：Flexbar 上写着 QQ 音乐的暂停键会把
+**视频**暂停掉，QQ 音乐继续放；再按一次还会因为插件内部状态漂移而"按了没反应"，
+界面则谎报「QQ 音乐未在播放」。
+
+### 走不通的路（别再试）
+
+1. **私有 `MRMediaRemoteSendCommandToApp`**：调用始终返回 true，但 QQ 音乐毫无反应；
+   bundle id 放在第 4 个参数不是"目标 app"（第 2 槽要字典、第 3 槽要 `MROrigin`）。
+2. **`SendCommandToClient` / `SendCommandToPlayer`**：需要 client / playerPath，而本机
+   `MRMediaRemoteGetNowPlayingClients` 恒返回 0 个 client，`GetNowPlayingClient` 返回 nil，
+   `MRMediaRemoteGetNowPlayingApplicationPID` 返回 0（同期 perl 适配器却读得到会话）；
+   自己编译的 adhoc 二进制拿不到任何应答，做成 dylib 塞进 perl 又会在加载后崩溃。
+   另外**沙盒会静默掐掉 MediaRemote 的 XPC 回调**，调试时先确认在不在沙盒里。
+3. **辅助功能读/点 QQ 音乐界面**：System Events 可用，但 QQ 音乐暴露的窗口列表是空的
+   （`windows: []`），读不到也点不到。
+
+### 最终方案：QQ 音乐自己的全局快捷键
+
+QQ 音乐注册了 MASShortcut 全局热键，键位在它的偏好里（`defaults export com.tencent.QQMusicMac` →
+`QMGlobalHotkeyPlayOrPause` 等；本机 `playpause=98 next=97 previous=100`）。
+插件用 `System Events.keyCode()` 合成这个按键，**绕开系统媒体会话**，只控制 QQ 音乐。
+
+- `helper/macos/qq-hotkey.jxa`：发送按键；`--test` 只发一个未使用的 keyCode 做权限自检。
+- `src/media-keys.js`：`readQqHotkeys()`（`defaults export` → `plutil -extract raw` 拿 base64 →
+  解码 → `plutil -p` 取 `KeyCode`，结果缓存）、`sendQqHotkey()`、`probeQqHotkeyPermission()`。
+- `src/plugin.js`：会话被别的 app 占用时走热键（日志 `transport key via QQ Music hotkey`），
+  `qqHotkeys: false` 可关闭。
+
+**前提**：FlexDesigner 要有「辅助功能」权限（发送按键）。启动自检会写在日志里：
+
+```
+[MediaKeys] QQ Music hotkey permission: ok (System Events can send keys) | playpause=98 next=97 previous=100 (qq music preferences)
+```
+
+### 顺带做的两件事
+
+- **后台模式**：会话被占用时不再把 QQ 音乐的样本丢掉，而是继续显示（状态键多一行「后台」），
+  provider 只在 `pgrep -x QQMusic` 确认进程没了才清空。
+- **切歌延迟**：macOS 采样基准 500ms、跳曲后 5 秒 200ms 快窗、追歌步长 120ms。
+
+### 验收锚点（已在本机实测通过）
+
+```
+[Plugin] transport key via QQ Music hotkey: playpause (media session belongs to com.microsoft.edgemac "…" playing=true)
+[MediaKeys] playpause -> QQ Music hotkey keyCode=98 (qq music preferences)
+```

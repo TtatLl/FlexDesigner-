@@ -107,6 +107,39 @@ class NowPlayingService {
     void this.start();
   }
 
+  /**
+   * Ask every provider to sample faster for a moment. Used right after a skip
+   * press so the new track is noticed as soon as the player publishes it,
+   * instead of on the next regular poll.
+   */
+  hurry(options) {
+    for (const provider of this.providers) {
+      try {
+        provider.hurry?.(options);
+      } catch (err) {
+        this.logger?.debug?.(`[NowPlaying] provider ${provider.id} hurry failed: ${err.message}`);
+      }
+    }
+    return this.poll();
+  }
+
+  /**
+   * Set while another app owns the system media session. macOS (and Windows
+   * SMTC) send media keys to that app, so the plugin must not treat a press as
+   * "control QQ Music" while this is non-null.
+   */
+  foreignSession() {
+    for (const provider of this.providers) {
+      try {
+        const foreign = provider.foreignSession?.();
+        if (foreign) return foreign;
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
+
   stop() {
     for (const provider of this.providers) {
       try {

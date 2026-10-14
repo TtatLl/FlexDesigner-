@@ -25,3 +25,28 @@
 | com.flexbar.qqmusicnow.macos.x64.flexplugin | 12.64 MB |
 
 一体包里 90% 以上体积是平台包内置的原生渲染库（canvas），改后端代码时 zip 通常只涨几 KB。
+
+---
+
+## 仓库源码版 1.0.7（2026-10-14）
+
+与第 7 版相比，这部分改动只来自 **macOS**（Windows 侧代码原样保留，`src/state.js`、
+`src/lyrics/service.js`、`src/render/artwork.js`、`src/nowplaying/windows-smtc.js` 等第 7 版
+的 Windows 侧修复都还在）：
+
+| 项 | 内容 |
+| --- | --- |
+| 切歌延迟 | macOS 采样基准 1000ms → 500ms；跳曲后开 5 秒快采样窗口（200ms）；追歌步长 250→120ms。日志锚点 `[Plugin] track change seen <N>ms after skip` |
+| 会话被占用 | 换成"后台模式"：继续显示 QQ 音乐的曲目/歌词（状态键多一行「后台」），不再谎报「未在播放」 |
+| 播放控制（关键） | 会话属于别的 app（浏览器视频等）时，改为发送 **QQ 音乐自己的全局快捷键**，绕开系统媒体会话，只控制 QQ 音乐、不影响视频。键位从 QQ 音乐偏好实时读取（本机 `playpause=98 next=97 previous=100`） |
+| 权限自检 | 启动时发一个未使用的 keyCode 自检；日志 `[MediaKeys] QQ Music hotkey permission: ok (System Events can send keys)`，没有权限时给出「勾选 FlexDesigner 辅助功能」的提示 |
+| 走不通的路 | MediaRemote 的 `SendCommandToApp/Client/Player` 定向控制在本机 macOS 15.7 上到不了 QQ 音乐（返回值恒 true 但毫无效果），已写进 skill 的踩坑清单，不再尝试 |
+
+实测证据（本机日志）：
+
+```
+20:51:23 [Plugin] transport key via QQ Music hotkey: playpause (media session belongs to com.microsoft.edgemac "…哔哩哔哩" playing=true)
+20:51:32 [MediaKeys] QQ Music hotkey permission: ok (System Events can send keys) | playpause=98 next=97 previous=100 (qq music preferences)
+```
+
+即：网页视频占用系统会话时，Flexbar 的暂停键控制的是 QQ 音乐，视频不受影响。

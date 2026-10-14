@@ -1,0 +1,63 @@
+// Drives QQ Music through its own global hotkeys.
+//
+// Why: the system media key always goes to whichever app owns the media session
+// (a browser video, Apple Music, ...), and the private "send command to a
+// specific app" API does not reach QQ Music on macOS 15 (measured 2026-10-14).
+// QQ Music registers real global shortcuts itself (MASShortcut, stored in
+// com.tencent.QQMusicMac defaults as QMGlobalHotkey*), so synthesising that
+// keystroke is what actually controls it - regardless of who owns the session.
+//
+// Needs the Accessibility permission for the process running osascript (that is
+// FlexDesigner). Without it System Events answers
+// "osascript is not allowed to send keystrokes".
+//
+// Run with:
+//   osascript -l JavaScript qq-hotkey.jxa playpause
+//   osascript -l JavaScript qq-hotkey.jxa playpause 98   (key code from the plugin)
+//   osascript -l JavaScript qq-hotkey.jxa --test     (probe only, sends an
+//                                                     unused key code)
+
+ObjC.import('Foundation');
+
+// Defaults match what QQ Music ships with. The plugin normally passes the key
+// code it read from QQ Music's own preferences on the command line - parsing the
+// NSKeyedArchiver payload here proved fragile in JXA (the bridge hands back a
+// wrapper whose properties are not reachable), so the reading happens in Node.
+var DEFAULT_KEY_CODES = { playpause: 98, next: 97, previous: 100, prev: 100 };
+
+function run(argv) {
+    var args = [];
+    for (var i = 0; i < (argv || []).length; i++) args.push(String(argv[i]));
+    var testOnly = args.indexOf('--test') >= 0;
+    var action = 'playpause';
+    var explicitKeyCode = null;
+    for (var a = 0; a < args.length; a++) {
+        var value = args[a];
+        if (value.charAt(0) === '-') continue;
+        if (/^\d+$/.test(value)) {
+            explicitKeyCode = Number(value);
+            continue;
+        }
+        if (action === 'playpause') action = value;
+    }
+
+    var keyCode = explicitKeyCode !== null ? explicitKeyCode : DEFAULT_KEY_CODES[action];
+    var source = explicitKeyCode !== null ? 'from plugin' : 'defaults';
+    if (testOnly) {
+        // An unused key code: proves whether System Events may synthesise keys
+        // at all without touching playback.
+        keyCode = 255;
+        source = 'permission probe';
+    }
+    if (typeof keyCode !== 'number' || !isFinite(keyCode)) {
+        return JSON.stringify({ ok: false, error: 'no key code for action ' + action });
+    }
+
+    try {
+        var systemEvents = Application('System Events');
+        systemEvents.keyCode(keyCode);
+        return JSON.stringify({ ok: true, action: action, keyCode: keyCode, source: source, via: 'System Events' });
+    } catch (err) {
+        return JSON.stringify({ ok: false, action: action, keyCode: keyCode, source: source, error: String(err) });
+    }
+}

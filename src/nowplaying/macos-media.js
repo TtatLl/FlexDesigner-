@@ -95,12 +95,17 @@ class MacOsMediaProvider {
     this.cliPath = cliPath;
     this.acceptAnyPlayer = acceptAnyPlayer;
     this.intervalMs = intervalMs;
+    // Base cadence is decided in start() once we know which reader answered:
+    // the perl adapter is ~10ms per sample, osascript costs ~500ms.
+    this.baseIntervalMs = Math.max(500, Number(intervalMs) || 1000);
     this.state = 'idle';
     this.detail = '';
     this.nowPlayingCli = null;
     this.debug = debug;
     this.rawLoggedAt = 0;
     this.timer = null;
+    this.fastTimer = null;
+    this.currentIntervalMs = 0;
     this.sample = null;
     this.sampleAt = 0;
     this.polling = false;
@@ -109,6 +114,11 @@ class MacOsMediaProvider {
     // player actually reports something new.
     this.clock = { key: '', baseMs: 0, baseAt: 0, lastReportedMs: null, rate: 1 };
     this.ownerAppId = '';
+    // Set when the system media session belongs to some other app (a browser
+    // video, Apple Music, …): the transport keys must not be sent to it.
+    this.foreign = null;
+    this.qqCheckAt = 0;
+    this.qqRunning = true;
     this.ownerCheckedKey = '';
     this.adapter = undefined; // { script, dylib } once resolved
     // Position bookkeeping for the adapter path: the player's anchor
@@ -260,17 +270,58 @@ class MacOsMediaProvider {
     );
     this.state = 'starting';
     await this.poll();
-    this.timer = setInterval(() => void this.poll(), Math.max(500, this.intervalMs));
+    const adapter = this.resolveAdapterPaths();
+    this.baseIntervalMs = adapter
+      ? Math.max(250, Math.min(500, Number(this.intervalMs) || 1000))
+      : Math.max(500, Number(this.intervalMs) || 1000);
+    this.armTimer(this.baseIntervalMs);
+    this.logger?.info?.(
+      `[NowPlaying] macOS sample interval: ${this.baseIntervalMs}ms` +
+        (adapter ? ' (MediaRemote adapter)' : ' (osascript)')
+    );
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
+    if (this.fastTimer) clearTimeout(this.fastTimer);
     this.timer = null;
+    this.fastTimer = null;
     this.state = 'stopped';
   }
 
+  /** (Re)arm the sampling timer at the given cadence. */
+  armTimer(intervalMs) {
+    if (this.timer) clearInterval(this.timer);
+    this.currentIntervalMs = Math.max(150, intervalMs);
+    this.timer = setInterval(() => void this.poll(), this.currentIntervalMs);
+  }
+
+  /**
+   * Sample much faster for a short window. Used right after a skip press: the
+   * player publishes the new track a few hundred ms later, and the regular
+   * cadence would otherwise quantise the update to a whole second.
+   */
+  hurry({ windowMs = 5000, intervalMs = 200 } = {}) {
+    if (this.state === 'stopped') return;
+    this.armTimer(intervalMs);
+    if (this.fastTimer) clearTimeout(this.fastTimer);
+    this.fastTimer = setTimeout(() => {
+      this.fastTimer = null;
+      this.armTimer(this.baseIntervalMs);
+    }, Math.max(500, windowMs));
+    void this.poll();
+  }
+
   status() {
-    return { id: this.id, label: this.label, state: this.state, detail: this.detail };
+    const foreign = this.foreignSession();
+    return {
+      id: this.id,
+      label: this.label,
+      state: this.state,
+      detail: this.detail,
+      intervalMs: this.currentIntervalMs || this.baseIntervalMs,
+      foreignAppId: foreign ? foreign.appId : '',
+    };
   }
 
   run(command, args, timeoutMs = 4000) {
@@ -495,11 +546,36 @@ class MacOsMediaProvider {
       // position possible; `nowplaying-cli get` and the JXA helper stay as
       // fallbacks for other installs.
       const viaAdapter = await this.pollAdapter();
-      const viaCli = viaAdapter ? null : await this.pollNowPlayingCli();
-      let sampled = viaAdapter || viaCli || (await this.pollJxa());
-      if (sampled && !this.acceptAnyPlayer && sampled.appId && !QQ_APP_PATTERN.test(sampled.appId)) {
-        if (this.debug) this.logger?.info?.(`[NowPlaying][debug] ignoring ${sampled.appId}`);
-        sampled = null;
+      // Both fallbacks block for seconds when the player reports no session
+      // (measured: nowplaying-cli 2.7s, osascript 0.5s). That is exactly the
+      // moment a skip happens, so inside the fast window the adapter - the same
+      // source, and already installed here - answers alone.
+      const fastWindow = !!this.fastTimer;
+      const useFallbacks = !this.adapter || !fastWindow;
+      const viaCli = useFallbacks && !viaAdapter ? await this.pollNowPlayingCli() : null;
+      let sampled = viaAdapter || viaCli || (useFallbacks ? await this.pollJxa() : null);
+      if (sampled) {
+        const ownedByQqMusic = !sampled.appId || QQ_APP_PATTERN.test(sampled.appId);
+        if (!this.acceptAnyPlayer && !ownedByQqMusic) {
+          // Some other app owns the system media session. Remember who, so the
+          // play/pause/next/previous keys are not silently sent to it, and so
+          // the bar can say "media session is X" instead of "nothing playing".
+          // `nowplaying-cli` (the fallback path) reports that placeholder when
+          // it could not resolve the owning app - that is "unknown", not "an
+          // other app", and must not block the transport keys.
+          if (String(sampled.appId).includes('.')) {
+            this.foreign = {
+              appId: sampled.appId,
+              title: sampled.title || '',
+              isPlaying: !!sampled.isPlaying,
+              at: Date.now(),
+            };
+          }
+          if (this.debug) this.logger?.info?.(`[NowPlaying][debug] ignoring ${sampled.appId}`);
+          sampled = null;
+        } else {
+          this.foreign = null;
+        }
       }
       if (sampled) {
         this.sample = sampled;
@@ -534,11 +610,54 @@ class MacOsMediaProvider {
 
   read() {
     if (!this.sample) return null;
+    // Another app owns the system media session (a browser video, Apple Music,
+    // ...). QQ Music keeps playing and is still controlled directly, so keep
+    // reporting its last state - flagged as `background` - instead of dropping
+    // to "nothing is playing". Only give up when QQ Music itself is gone.
+    if (this.foreignSession()) {
+      if (!this.qqMusicRunning()) return null;
+      return { ...this.sample, background: true };
+    }
     if (Date.now() - this.sampleAt > STALE_MS) {
       this.state = 'stale';
       return null;
     }
     return this.sample;
+  }
+
+  /**
+   * Is the QQ Music process still alive? pgrep costs ~5ms, so the answer is
+   * cached: the sample loop runs every 500ms and forking twice a second for a
+   * process check would be wasteful.
+   */
+  qqMusicRunning() {
+    const now = Date.now();
+    if (now - this.qqCheckAt < 10000) return this.qqRunning;
+    this.qqCheckAt = now;
+    try {
+      const result = spawnSync('/usr/bin/pgrep', ['-x', 'QQMusic'], { timeout: 2000 });
+      // pgrep: 0 = found, 1 = no match, anything else = it could not enumerate
+      // processes at all (sandbox, TCC). "Could not check" must never be read as
+      // "QQ Music is gone", or the bar would drop a still-playing track.
+      if (result.error || result.status === 0 || result.status > 1) this.qqRunning = true;
+      else this.qqRunning = false;
+    } catch {
+      this.qqRunning = true;
+    }
+    return this.qqRunning;
+  }
+
+  /**
+   * The app that owns the system media session, when it is not QQ Music.
+   *
+   * macOS routes every media key to that app, so this is what tells the plugin
+   * "the pause key would pause a web video, not the music". Expires on its own:
+   * a stale guess is worse than no guess.
+   */
+  foreignSession(maxAgeMs = 12000) {
+    if (!this.foreign) return null;
+    if (Date.now() - this.foreign.at > maxAgeMs) return null;
+    return this.foreign;
   }
 
   /**

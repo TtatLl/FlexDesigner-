@@ -16,6 +16,8 @@ class MacAxTrackReader {
     this.scriptPath = scriptPath;
     this.timeoutMs = timeoutMs;
     this.busy = false;
+    this.lastFailureAt = 0;
+    this.lastFailureReason = '';
   }
 
   /** @returns {Promise<{title:string,artist:string}|null>} */
@@ -51,17 +53,36 @@ class MacAxTrackReader {
         clearTimeout(timer);
         if (code !== 0) return finish(null);
         const line = Buffer.concat(chunks).toString('utf8').trim().split('\n').pop() || '';
+        let payload = null;
         try {
-          const payload = JSON.parse(line);
-          if (payload.ok && payload.title) {
-            return finish({ title: payload.title, artist: payload.artist || '' });
-          }
+          payload = JSON.parse(line);
         } catch {
-          /* fall through */
+          payload = null;
         }
+        if (payload && payload.ok && payload.title) {
+          return finish({ title: payload.title, artist: payload.artist || '' });
+        }
+        this.noteFailure(
+          (payload && payload.error) || (line ? 'unparsable helper output' : 'empty helper output')
+        );
         finish(null);
       });
     });
+  }
+
+  /**
+   * The prefetch path fails silently by design (it runs while the user is
+   * switching tracks), which made "为什么要等一秒" impossible to diagnose from
+   * the log. Surface the reason, rate limited to once a minute.
+   */
+  noteFailure(reason) {
+    const now = Date.now();
+    if (now - this.lastFailureAt < 60000) return;
+    this.lastFailureAt = now;
+    this.lastFailureReason = reason;
+    this.logger?.info?.(
+      `[Ax] 读播放器窗口失败（${reason}）：切歌预取跳过，请在「系统设置 → 隐私与安全性 → 辅助功能」里勾选 FlexDesigner`
+    );
   }
 }
 

@@ -1,6 +1,7 @@
 'use strict';
 
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
+const fs = require('fs');
 
 /**
  * Cross-platform media transport control.
@@ -34,6 +35,75 @@ class MediaKeys {
     this.config = config;
     this.server = null;
     this.warned = false;
+    this.qqHotkeys = null;
+  }
+
+  /**
+   * QQ Music's own global shortcuts (play/pause, next, previous).
+   *
+   * They live in QQ Music's preferences and are the only way to control it while
+   * another app owns the system media session. `defaults export` asks cfprefsd
+   * for the merged domain (the app does not keep a plain plist in
+   * ~/Library/Preferences), then plutil hands each value over as base64 whose
+   * NSKeyedArchiver payload contains the key code.
+   */
+  readQqHotkeys() {
+    if (this.qqHotkeys) return this.qqHotkeys;
+    const fallback = { playpause: 98, next: 97, previous: 100, source: 'defaults' };
+    if (process.platform !== 'darwin') {
+      this.qqHotkeys = fallback;
+      return this.qqHotkeys;
+    }
+
+    const os = require('os');
+    const exported = `${os.tmpdir()}/qqmusic-hotkeys.plist`;
+    const blob = `${os.tmpdir()}/qqmusic-hotkey-value.plist`;
+    const names = { playpause: 'QMGlobalHotkeyPlayOrPause', next: 'QMGlobalHotkeyNext', previous: 'QMGlobalHotkeyPrev' };
+    const result = { ...fallback, source: 'qq music preferences' };
+    try {
+      const dump = spawnSync('/usr/bin/defaults', ['export', 'com.tencent.QQMusicMac', exported], {
+        timeout: 5000,
+        encoding: 'utf8',
+      });
+      if (dump.status !== 0) {
+        throw new Error(
+          `defaults export exit ${dump.status}` +
+            (dump.error ? ` (${dump.error.message})` : '') +
+            (dump.stderr ? `: ${String(dump.stderr).trim().slice(0, 120)}` : '')
+        );
+      }
+      let found = 0;
+      for (const [action, prefName] of Object.entries(names)) {
+        // `raw` prints the value as base64; the payload is the NSKeyedArchiver
+        // plist itself, so decode it before asking plutil to describe it.
+        const raw = spawnSync('/usr/bin/plutil', ['-extract', prefName, 'raw', '-o', '-', exported], {
+          timeout: 5000,
+          encoding: 'utf8',
+        });
+        if (raw.status !== 0 || !raw.stdout) continue;
+        const decoded = Buffer.from(String(raw.stdout).trim(), 'base64');
+        if (!decoded.length) continue;
+        fs.writeFileSync(blob, decoded);
+        const printed = spawnSync('/usr/bin/plutil', ['-p', blob], { timeout: 5000, encoding: 'utf8' });
+        const match = String(printed.stdout || '').match(/"KeyCode"\s*=>\s*(\d+)/);
+        if (match) {
+          result[action] = Number(match[1]);
+          found += 1;
+        }
+      }
+      result.source = found === Object.keys(names).length ? 'qq music preferences' : 'defaults';
+    } catch (err) {
+      this.logger?.info?.(`[MediaKeys] QQ Music hotkey lookup failed: ${err.message}`);
+      result.source = 'defaults';
+    }
+    if (result.source !== 'qq music preferences') {
+      this.logger?.info?.(
+        `[MediaKeys] QQ Music hotkeys: using defaults for the missing ones ` +
+          `(playpause=${result.playpause} next=${result.next} previous=${result.previous})`
+      );
+    }
+    this.qqHotkeys = result;
+    return result;
   }
 
   start() {
@@ -87,6 +157,16 @@ class MediaKeys {
   }
 
   async sendMacAction(action, hint) {
+    const targetApp = hint && hint.targetApp ? String(hint.targetApp) : '';
+    if (hint && hint.qqHotkey) {
+      return this.sendQqHotkey(action, hint);
+    }
+    if (targetApp) {
+      // Addressed at one specific app: never fall back to the global command
+      // here, that is exactly the hijack this path exists to avoid.
+      return this.sendToApp(action, targetApp, hint);
+    }
+
     const viaCli = await this.sendViaNowPlayingCli(action, hint);
     if (viaCli) return true;
 
@@ -117,6 +197,183 @@ class MediaKeys {
       );
     }
     return result.ok;
+  }
+
+  /**
+   * macOS only: drive QQ Music through its own global hotkey.
+   *
+   * The media key always goes to whoever owns the media session, and the private
+   * targeted-command API does not reach QQ Music on macOS 15 (measured
+   * 2026-10-14). QQ Music's own global shortcut does the job - but sending a
+   * keystroke needs the Accessibility permission for whoever runs osascript
+   * (FlexDesigner), so failures are reported instead of swallowed.
+   */
+  sendQqHotkey(action, hint) {
+    const helperAction = action === 'toggle' ? 'playpause' : action;
+    const hotkeys = this.readQqHotkeys();
+    const keyCode = hotkeys[helperAction];
+    return new Promise((resolve) => {
+      const child = spawn(
+        'osascript',
+        ['-l', 'JavaScript', `${this.helperDir}/macos/qq-hotkey.jxa`, helperAction, String(keyCode)],
+        { windowsHide: true }
+      );
+      const chunks = [];
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const timer = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+          /* ignore */
+        }
+        this.logger?.warn?.(`[MediaKeys] QQ Music hotkey ${helperAction} timed out`);
+        finish(false);
+      }, 4000);
+
+      child.stdout.on('data', (chunk) => chunks.push(chunk));
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        this.logger?.warn?.(`[MediaKeys] QQ Music hotkey failed: ${err.message}`);
+        finish(false);
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        const text = Buffer.concat(chunks).toString('utf8').trim().split('\n').pop() || '';
+        let payload = null;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = null;
+        }
+        if (code === 0 && payload && payload.ok) {
+          this.logger?.info?.(
+            `[MediaKeys] ${helperAction} -> QQ Music hotkey keyCode=${payload.keyCode} (${hotkeys.source})`
+          );
+          finish(true);
+        } else {
+          const reason = (payload && payload.error) || `exit ${code}`;
+          this.logger?.warn?.(
+            `[MediaKeys] QQ Music hotkey ${helperAction} failed: ${reason}` +
+              (/not allowed|不允许|-1743|1002/.test(String(reason))
+                ? ' - 请在「系统设置 → 隐私与安全性 → 辅助功能」里勾选 FlexDesigner'
+                : '')
+          );
+          finish(false);
+        }
+      });
+    });
+  }
+
+  /**
+   * One-off startup check: may this process synthesise keystrokes at all?
+   *
+   * Sends an unused key code, so nothing can be toggled. Without the
+   * Accessibility permission System Events answers "not allowed to send
+   * keystrokes", and the QQ Music hotkey path can never work - better to say so
+   * in the log than to leave the user guessing why a key does nothing.
+   */
+  probeQqHotkeyPermission() {
+    if (process.platform !== 'darwin') return;
+    const child = spawn(
+      'osascript',
+      ['-l', 'JavaScript', `${this.helperDir}/macos/qq-hotkey.jxa`, '--test'],
+      { windowsHide: true }
+    );
+    const chunks = [];
+    child.stdout.on('data', (chunk) => chunks.push(chunk));
+    child.on('error', (err) => {
+      this.logger?.warn(`[MediaKeys] hotkey permission probe failed: ${err.message}`);
+    });
+    child.on('exit', () => {
+      const text = Buffer.concat(chunks).toString('utf8').trim().split('\n').pop() || '';
+      let payload = null;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = null;
+      }
+      if (payload && payload.ok) {
+        const hotkeys = this.readQqHotkeys();
+        this.logger?.info(
+          '[MediaKeys] QQ Music hotkey permission: ok (System Events can send keys) | ' +
+            `playpause=${hotkeys.playpause} next=${hotkeys.next} previous=${hotkeys.previous} (${hotkeys.source})`
+        );
+      } else {
+        this.logger?.warn(
+          `[MediaKeys] QQ Music hotkey permission: blocked (${(payload && payload.error) || 'no answer'})` +
+            ' - 在「系统设置 → 隐私与安全性 → 辅助功能」里勾选 FlexDesigner 后重启插件'
+        );
+      }
+    });
+  }
+
+  /**
+   * macOS only: send the command to one app even when another app owns the
+   * system media session (private MRMediaRemoteSendCommandToApp, which
+   * nowplaying-cli does not expose). QQ Music ignores TogglePlayPause, so an
+   * explicit play/pause is sent when the caller knows the wanted state.
+   */
+  sendToApp(action, targetApp, hint) {
+    let helperAction = action;
+    if (hint && typeof hint.expectPlaying === 'boolean' && (action === 'playpause' || action === 'toggle')) {
+      helperAction = hint.expectPlaying ? 'play' : 'pause';
+    }
+
+    return new Promise((resolve) => {
+      const child = spawn(
+        'osascript',
+        ['-l', 'JavaScript', `${this.helperDir}/macos/media-key.jxa`, helperAction, targetApp],
+        { windowsHide: true }
+      );
+      const chunks = [];
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const timer = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {
+          /* ignore */
+        }
+        this.logger?.warn?.(`[MediaKeys] targeted ${helperAction} to ${targetApp} timed out`);
+        finish(false);
+      }, 4000);
+
+      child.stdout.on('data', (chunk) => chunks.push(chunk));
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        this.logger?.warn?.(`[MediaKeys] targeted ${helperAction} failed: ${err.message}`);
+        finish(false);
+      });
+      child.on('exit', (code) => {
+        clearTimeout(timer);
+        const text = Buffer.concat(chunks).toString('utf8').trim().split('\n').pop() || '';
+        let payload = null;
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = null;
+        }
+        if (code === 0 && payload && payload.ok) {
+          this.logger?.info?.(`[MediaKeys] ${helperAction} -> ${targetApp} via ${payload.via}`);
+          finish(true);
+        } else {
+          this.logger?.warn?.(
+            `[MediaKeys] targeted ${helperAction} to ${targetApp} failed ` +
+              `(${(payload && payload.error) || `exit ${code}`})`
+          );
+          finish(false);
+        }
+      });
+    });
   }
 
   /**
