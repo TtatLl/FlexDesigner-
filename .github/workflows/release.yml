@@ -28,12 +28,23 @@ jobs:
       # platform. A plain install on this runner only fetches the Linux binding,
       # which is how the first tagged build produced packages that silently lost
       # canvas rendering everywhere else - so pull the other platforms too.
+      # `npm install` refuses packages for a different os/cpu (EBADPLATFORM), so
+      # fetch the tarballs and unpack them by hand, pinned to the canvas version
+      # that is actually installed.
       - name: Install platform canvas binaries
         run: |
-          npm install --no-save \
-            @napi-rs/canvas-darwin-arm64@^0.1.83 \
-            @napi-rs/canvas-darwin-x64@^0.1.83 \
-            @napi-rs/canvas-win32-x64-msvc@^0.1.83
+          set -euo pipefail
+          CANVAS_VERSION=$(node -p "require('@napi-rs/canvas/package.json').version")
+          echo "canvas version: $CANVAS_VERSION"
+          mkdir -p node_modules/@napi-rs
+          for pkg in canvas-darwin-arm64 canvas-darwin-x64 canvas-win32-x64-msvc; do
+            tgz=$(npm pack "@napi-rs/$pkg@$CANVAS_VERSION" --pack-destination /tmp | tail -1)
+            rm -rf "node_modules/@napi-rs/$pkg"
+            mkdir -p "node_modules/@napi-rs/$pkg"
+            tar -xzf "/tmp/$tgz" -C "node_modules/@napi-rs/$pkg" --strip-components=1
+            echo "  + $pkg ($tgz)"
+          done
+          ls node_modules/@napi-rs
 
       - name: Install FlexCLI
         run: npm install -g @eniac/flexcli
