@@ -74,4 +74,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          name: QQMusicNow ${{ github.ref_name }}（Windows + macOS）
+          generate_release_notes: true
           files: dist/*.flexplugin
