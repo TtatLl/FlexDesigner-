@@ -47,10 +47,20 @@ jobs:
       - name: Verify each package carries the right native library
         run: node tools/verify-platform-packages.js
 
+      # Always keep the packages as workflow artifacts, so a manual run (or a
+      # run whose release step is skipped) still leaves something downloadable.
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flexplugin-packages
+          path: dist/*.flexplugin
+          if-no-files-found: error
+
       # FlexGate reads the plugin metadata from this repository; the packed
       # .flexplugin files are published as release assets so users can download
       # the one that matches their machine.
       - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.flexplugin
